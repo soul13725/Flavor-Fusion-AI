@@ -16,6 +16,7 @@ engine), but display strings are translated to the chosen language.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -24,10 +25,43 @@ import streamlit as st
 # ── Ensure project root is importable (handles stlite and direct `streamlit run`)
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import VALID_EQUIPMENT, VALID_CUISINES, VALID_MEAL_CATEGORIES
+from config import VALID_EQUIPMENT, VALID_CUISINES
 from database import RecipeDatabase
-from engine import CulinaryEngine
-from models import TimeConstraints, UserConstraints
+from engine import CulinaryEngine, GenerationResult
+from models import BeveragePairing, GeneratedRecipe, IngredientItem, TimeConstraints, UserConstraints
+from nutrition import calculate_recipe_nutrition
+from retrieval import (
+    load_all_recipes,
+    load_beverages,
+    retrieve_beverage_pairing,
+    retrieve_candidate_recipes,
+)
+from user_store import (
+    add_favorite,
+    add_recent,
+    authenticate_user,
+    get_favorites,
+    get_recents,
+    get_user,
+    init_user_db,
+    request_email_verification,
+    request_password_reset,
+    register_user,
+    reset_password,
+    update_profile,
+    verify_email,
+)
+
+BEVERAGE_CATEGORIES = ["Cocktail", "Mocktail", "Coffee", "Tea", "Smoothie"]
+FOOD_MEAL_CATEGORIES = [
+    "Breakfast",
+    "Lunch",
+    "Dinner",
+    "Snack",
+    "Dessert",
+    "Appetizer",
+    "Side Dish",
+]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UI Label Translations
@@ -35,10 +69,12 @@ from models import TimeConstraints, UserConstraints
 
 UI_STRINGS: dict = {
     "en": {
-        "title": "🍽️ Flavor Fusion AI",
-        "subtitle": "Your AI-powered culinary & mixology assistant",
+        "title": "🍽️ FUSION FLAVOUR",
+        "subtitle": "Discover recipes, beverages, and nutrition in one smart kitchen workspace",
         "api_key_label": "OpenAI API Key",
         "api_key_help": "Used only for this session. Never stored.",
+        "offline_mode_label": "Offline Mode (No API Key)",
+        "offline_mode_help": "Use local dataset retrieval only. No LLM creativity or translation.",
         "language_label": "Output Language",
         "skill_label": "Skill Level",
         "equipment_label": "Available Equipment",
@@ -50,18 +86,27 @@ UI_STRINGS: dict = {
         "absurd_label": "🎲 Absurd Mode",
         "absurd_help": "Invent a wildly creative fusion dish — logic optional.",
         "ingredients_label": "🥦 Your Pantry Ingredients",
-        "ingredients_placeholder": "chicken breast\nonion\ngarlic\ntomato\nyogurt\ncream\nrice",
-        "ingredients_help": "One ingredient per line. Be specific for better results.",
+        "ingredients_placeholder": "Type ingredients manually, one per line",
+        "ingredients_help": "Enter ingredients from your keyboard, one per line.",
         "generate_btn": "✨ Generate Recipe",
+        "beverage_input_label": "🥂 Beverage Ingredients",
+        "beverage_input_placeholder": "Type beverage ingredients manually, one per line",
+        "beverage_input_help": "Enter beverage ingredients from your keyboard, one per line.",
+        "beverage_type_label": "Beverage Type",
+        "generate_beverage_btn": "🥂 Generate Beverage",
+        "beverage_result_header": "Beverage Result",
+        "no_beverage_ingredients": "⚠️ Please add at least one beverage ingredient.",
+        "no_beverage_match": "No beverage match found for the current ingredients and filters.",
         "generating": "🔥 Cooking up something amazing…",
         "no_ingredients": "⚠️ Please add at least one ingredient.",
         "no_api_key": "🔑 Please enter your OpenAI API Key in the sidebar.",
         "recipe_tab": "🍽️ Recipe",
         "nutrition_tab": "📊 Nutrition",
         "beverage_tab": "🥂 Beverage Pairing",
-        "debug_tab": "🔍 Debug",
         "ingredients_header": "Ingredients",
         "instructions_header": "Instructions",
+        "veg_symbol": "🥬",
+        "beverage_symbol": "🥤",
         "per_serving": "Per Serving",
         "total_header": "Total",
         "calories": "Calories (kcal)",
@@ -78,15 +123,58 @@ UI_STRINGS: dict = {
         "beverages_in_db": "beverages in DB",
         "nutrition_entries": "nutrition entries",
         "error_prefix": "❌ Generation failed",
+        "offline_recipe_title": "Offline Recipe",
+        "offline_no_candidates": "No local dataset match found for current filters. Try broader equipment/time/cuisine settings.",
         "cuisine_badge": "🌍 {c}",
         "time_badge": "⏱️ {min} min",
         "servings_badge": "👥 {n} serving(s)",
         "equipment_badge": "🔧 {eq}",
         "candidates_used": "Candidates retrieved from DB",
         "raw_prompt_preview": "System prompt preview",
+        "account_header": "👤 Account",
+        "login_tab": "Login",
+        "register_tab": "Register",
+        "login_id_label": "Username or Email",
+        "password_label": "Password",
+        "login_btn": "Sign In",
+        "logout_btn": "Sign Out",
+        "register_user_label": "Username",
+        "register_email_label": "Email",
+        "register_password_label": "Create Password",
+        "register_confirm_label": "Confirm Password",
+        "register_btn": "Create Account",
+        "password_mismatch": "Passwords do not match.",
+        "auth_failed": "Invalid username/email or password.",
+        "verify_tab": "Verify Email",
+        "verify_code_label": "Verification Code",
+        "verify_btn": "Verify Account",
+        "resend_code_btn": "Generate Verification Code",
+        "reset_tab": "Reset Password",
+        "reset_code_label": "Reset Code",
+        "new_password_label": "New Password",
+        "request_reset_btn": "Generate Reset Code",
+        "reset_password_btn": "Reset Password",
+        "verify_required": "Please verify your account before logging in.",
+        "dev_code_note": "Development mode: use the generated code below.",
+        "dashboard_header": "📊 Personal Dashboard",
+        "fav_tab": "Favorites",
+        "recent_tab": "Recent",
+        "profile_tab": "Profile",
+        "recommend_tab": "Recommended",
+        "no_recommend": "No recommendations yet. Save or open a few items first.",
+        "save_recipe_btn": "⭐ Save Recipe",
+        "save_beverage_btn": "⭐ Save Beverage",
+        "saved_ok": "Saved to favorites.",
+        "no_favorites": "No favorites yet.",
+        "no_recent": "No recent items yet.",
+        "display_name_label": "Display Name",
+        "bio_label": "Bio",
+        "profile_save_btn": "Update Profile",
+        "datasets_header": "🌐 Dataset Sources",
+        "datasets_help": "Use these public sources to build your own production database.",
     },
     "hi": {
-        "title": "🍽️ फ्लेवर फ्यूज़न AI",
+        "title": "🍽️ FUSION FLAVOUR",
         "subtitle": "आपका AI-संचालित पाक और मिक्सोलॉजी सहायक",
         "api_key_label": "OpenAI API कुंजी",
         "api_key_help": "केवल इस सत्र के लिए उपयोग की जाती है।",
@@ -101,8 +189,8 @@ UI_STRINGS: dict = {
         "absurd_label": "🎲 बेतुका मोड",
         "absurd_help": "सभी तर्क को नजरअंदाज करते हुए एक जंगली फ्यूजन डिश।",
         "ingredients_label": "🥦 आपकी पैंट्री सामग्री",
-        "ingredients_placeholder": "चिकन ब्रेस्ट\nप्याज\nलहसुन\nटमाटर\nदही",
-        "ingredients_help": "प्रति पंक्ति एक सामग्री।",
+        "ingredients_placeholder": "सामग्री स्वयं टाइप करें, हर पंक्ति में एक",
+        "ingredients_help": "कीबोर्ड से सामग्री दर्ज करें, प्रति पंक्ति एक।",
         "generate_btn": "✨ रेसिपी बनाएं",
         "generating": "🔥 कुछ अद्भुत पका रहे हैं…",
         "no_ingredients": "⚠️ कृपया कम से कम एक सामग्री जोड़ें।",
@@ -137,7 +225,7 @@ UI_STRINGS: dict = {
         "raw_prompt_preview": "सिस्टम प्रॉम्प्ट पूर्वावलोकन",
     },
     "it": {
-        "title": "🍽️ Flavor Fusion AI",
+        "title": "🍽️ FUSION FLAVOUR",
         "subtitle": "Il tuo assistente culinario e mixologico alimentato dall'AI",
         "api_key_label": "Chiave API OpenAI",
         "api_key_help": "Usata solo per questa sessione.",
@@ -152,8 +240,8 @@ UI_STRINGS: dict = {
         "absurd_label": "🎲 Modalità Assurda",
         "absurd_help": "Inventa un piatto fusion selvaggiamente creativo.",
         "ingredients_label": "🥦 Ingredienti nella tua dispensa",
-        "ingredients_placeholder": "petto di pollo\ncipolla\naglio\npomodoro\nyogurt",
-        "ingredients_help": "Un ingrediente per riga.",
+        "ingredients_placeholder": "Digita manualmente gli ingredienti, uno per riga",
+        "ingredients_help": "Inserisci gli ingredienti dalla tastiera, uno per riga.",
         "generate_btn": "✨ Genera Ricetta",
         "generating": "🔥 Preparando qualcosa di straordinario…",
         "no_ingredients": "⚠️ Aggiungi almeno un ingrediente.",
@@ -188,7 +276,7 @@ UI_STRINGS: dict = {
         "raw_prompt_preview": "Anteprima del prompt di sistema",
     },
     "zh": {
-        "title": "🍽️ 风味融合 AI",
+        "title": "🍽️ FUSION FLAVOUR",
         "subtitle": "您的 AI 驱动烹饪和调酒助手",
         "api_key_label": "OpenAI API 密钥",
         "api_key_help": "仅在本次会话中使用，不会被存储。",
@@ -203,8 +291,8 @@ UI_STRINGS: dict = {
         "absurd_label": "🎲 荒诞模式",
         "absurd_help": "无视所有逻辑，发明一道极具创意的融合菜。",
         "ingredients_label": "🥦 您的食材清单",
-        "ingredients_placeholder": "鸡胸肉\n洋葱\n大蒜\n番茄\n酸奶",
-        "ingredients_help": "每行一种食材。",
+        "ingredients_placeholder": "请手动输入食材，每行一种",
+        "ingredients_help": "通过键盘输入食材，每行一种。",
         "generate_btn": "✨ 生成食谱",
         "generating": "🔥 正在烹饪美味…",
         "no_ingredients": "⚠️ 请至少添加一种食材。",
@@ -238,12 +326,76 @@ UI_STRINGS: dict = {
         "candidates_used": "从数据库检索到的候选数",
         "raw_prompt_preview": "系统提示预览",
     },
+    "mr": {
+        "title": "🍽️ FUSION FLAVOUR",
+        "subtitle": "तुमचा AI-आधारित पाककला आणि पेय सहाय्यक",
+        "api_key_label": "OpenAI API की",
+        "api_key_help": "फक्त या सत्रासाठी वापरली जाते. संग्रहित केली जाणार नाही.",
+        "offline_mode_label": "ऑफलाइन मोड (API की शिवाय)",
+        "offline_mode_help": "फक्त स्थानिक डेटासेट वापरा. LLM सर्जनशीलता किंवा भाषांतर नाही.",
+        "language_label": "आउटपुट भाषा",
+        "skill_label": "कौशल्य पातळी",
+        "equipment_label": "उपलब्ध उपकरणे",
+        "cuisine_label": "पाककृती प्राधान्य",
+        "meal_label": "अन्न प्रकार",
+        "prep_time_label": "कमाल तयारी वेळ (मिनिटे)",
+        "total_time_label": "कमाल एकूण वेळ (मिनिटे)",
+        "servings_label": "सर्विंग्स",
+        "absurd_label": "🎲 विचित्र मोड",
+        "absurd_help": "अतिशय अनोखी फ्युजन डिश तयार करा.",
+        "ingredients_label": "🥦 तुमचे साहित्य",
+        "ingredients_placeholder": "साहित्य हाताने टाइप करा, प्रत्येक ओळीत एक",
+        "ingredients_help": "कीबोर्डवरून साहित्य लिहा, प्रत्येक ओळीत एक.",
+        "generate_btn": "✨ रेसिपी तयार करा",
+        "beverage_input_label": "🥂 पेयासाठी साहित्य",
+        "beverage_input_placeholder": "पेयासाठी साहित्य हाताने टाइप करा, प्रत्येक ओळीत एक",
+        "beverage_input_help": "कीबोर्डवरून पेयाचे साहित्य लिहा, प्रत्येक ओळीत एक.",
+        "beverage_type_label": "पेय प्रकार",
+        "generate_beverage_btn": "🥂 पेय तयार करा",
+        "beverage_result_header": "पेय निकाल",
+        "no_beverage_ingredients": "⚠️ कृपया पेयासाठी किमान एक साहित्य जोडा.",
+        "no_beverage_match": "सध्याच्या साहित्य आणि फिल्टरसाठी कोणतेही पेय जुळले नाही.",
+        "generating": "🔥 काहीतरी अप्रतिम तयार होत आहे…",
+        "no_ingredients": "⚠️ कृपया किमान एक साहित्य जोडा.",
+        "no_api_key": "🔑 कृपया साइडबारमध्ये OpenAI API की द्या.",
+        "recipe_tab": "🍽️ रेसिपी",
+        "nutrition_tab": "📊 पोषण",
+        "beverage_tab": "🥂 पेय जोडी",
+        "debug_tab": "🔍 डीबग",
+        "ingredients_header": "साहित्य",
+        "instructions_header": "कृती",
+        "per_serving": "प्रति सर्विंग",
+        "total_header": "एकूण",
+        "calories": "कॅलरी (kcal)",
+        "protein": "प्रथिने (g)",
+        "fat": "चरबी (g)",
+        "carbs": "कार्ब्स (g)",
+        "fiber": "तंतू (g)",
+        "sugar": "साखर (g)",
+        "sodium": "सोडियम (mg)",
+        "unmatched": "⚠️ न जुळलेले साहित्य (एकूणात समाविष्ट नाही)",
+        "dark_mode": "🌙 डार्क मोड",
+        "db_stats": "📂 डेटाबेस",
+        "recipes_in_db": "डेटाबेसमधील रेसिपी",
+        "beverages_in_db": "डेटाबेसमधील पेये",
+        "nutrition_entries": "पोषण नोंदी",
+        "error_prefix": "❌ निर्मिती अयशस्वी",
+        "offline_recipe_title": "ऑफलाइन रेसिपी",
+        "offline_no_candidates": "सध्याच्या फिल्टरसाठी स्थानिक डेटासेटमध्ये जुळणारी रेसिपी सापडली नाही. फिल्टर विस्तृत करून पहा.",
+        "cuisine_badge": "🌍 {c}",
+        "time_badge": "⏱️ {min} मिनिटे",
+        "servings_badge": "👥 {n} सर्विंग्स",
+        "equipment_badge": "🔧 {eq}",
+        "candidates_used": "डेटाबेसमधून मिळालेले पर्याय",
+        "raw_prompt_preview": "सिस्टम प्रॉम्प्ट पूर्वावलोकन",
+    },
 }
 
 LANGUAGE_OPTIONS: dict = {
     "English": "en",
     "हिन्दी (Hindi)": "hi",
     "Italiano (Italian)": "it",
+    "मराठी (Marathi)": "mr",
     "中文 (Mandarin)": "zh",
 }
 
@@ -257,19 +409,30 @@ _DARK_CSS = """
 [data-testid="stAppViewContainer"],
 [data-testid="stHeader"],
 [data-testid="stSidebar"] {
-    background-color: #0f0f23 !important;
+    background: radial-gradient(circle at 15% 15%, #1d2555 0%, #0f0f23 45%, #090913 100%) !important;
     color: #e2e2f0 !important;
 }
 [data-testid="stSidebar"] {
     background-color: #16213e !important;
 }
-.stMarkdown, .stText, label, p, h1, h2, h3, h4 {
+.stMarkdown, .stText, label, p, h1, h2, h3, h4, h5, h6,
+[data-testid="stSidebar"] * {
     color: #e2e2f0 !important;
 }
-.stTextArea textarea, .stTextInput input, .stSelectbox select {
+.stTextArea textarea,
+.stTextInput input,
+.stSelectbox select,
+[data-baseweb="select"] > div,
+[data-baseweb="select"] input,
+[data-baseweb="tag"],
+[data-testid="stNumberInput"] input {
     background-color: #1a1a3e !important;
     color: #e2e2f0 !important;
     border-color: #4a4a7a !important;
+}
+[data-testid="stNumberInput"] button,
+[data-testid="stNumberInput"] button svg {
+    color: #e2e2f0 !important;
 }
 .stButton > button {
     background: linear-gradient(135deg, #6c63ff, #e040fb) !important;
@@ -298,6 +461,24 @@ _DARK_CSS = """
 .stTabs [aria-selected="true"] {
     color: #e2e2f0 !important;
     border-bottom-color: #6c63ff !important;
+}
+[data-testid="stCaptionContainer"],
+[data-testid="stWidgetLabel"],
+.st-emotion-cache-16txtl3,
+.st-emotion-cache-1wmy9hl {
+    color: #cfd3ff !important;
+}
+[data-testid="stExpander"] {
+    background-color: #131832 !important;
+    border: 1px solid #303968 !important;
+    border-radius: 10px !important;
+}
+[data-testid="stAlertContainer"] {
+    background-color: #151b38 !important;
+    border-color: #3b467e !important;
+}
+[data-testid="stVerticalBlock"] > [style*="flex-direction: column"] > [data-testid="stVerticalBlockBorderWrapper"] {
+    border-radius: 14px !important;
 }
 .recipe-card {
     background-color: #1a1a3e !important;
@@ -382,19 +563,28 @@ _BASE_CSS = """
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _init_session_state() -> None:
+    legacy_pantry_seed = (
+        "chicken breast\nonion\ngarlic\ntomato\nyogurt\ncream\nrice\ncilantro"
+    )
     defaults = {
-        "dark_mode": False,
+        "dark_mode": True,
         "language": "en",
         "api_key": "",
+        "offline_mode": True,
+        "user_id": None,
+        "user_name": "",
         "last_result": None,
+        "last_beverage": None,
         "last_constraints": None,
-        "pantry_text": (
-            "chicken breast\nonion\ngarlic\ntomato\nyogurt\ncream\nrice\ncilantro"
-        ),
+        "pantry_text": "",
+        "beverage_text": "",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+    if st.session_state.get("pantry_text", "").strip() == legacy_pantry_seed:
+        st.session_state.pantry_text = ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -410,23 +600,16 @@ def _t(key: str) -> str:
 
 
 def _apply_theme() -> None:
-    """Inject theme CSS and attempt to set the Streamlit config option."""
+    """Inject a consistent dark theme and set Streamlit theme options."""
     st.markdown(_BASE_CSS, unsafe_allow_html=True)
-    if st.session_state.dark_mode:
-        st.markdown(_DARK_CSS, unsafe_allow_html=True)
-        try:
-            st._config.set_option("theme.base", "dark")
-            st._config.set_option("theme.backgroundColor", "#0f0f23")
-            st._config.set_option("theme.secondaryBackgroundColor", "#16213e")
-            st._config.set_option("theme.textColor", "#e2e2f0")
-        except Exception:
-            pass  # Internal API may not be available in all versions
-    else:
-        st.markdown(_LIGHT_CSS, unsafe_allow_html=True)
-        try:
-            st._config.set_option("theme.base", "light")
-        except Exception:
-            pass
+    st.markdown(_DARK_CSS, unsafe_allow_html=True)
+    try:
+        st._config.set_option("theme.base", "dark")
+        st._config.set_option("theme.backgroundColor", "#0f0f23")
+        st._config.set_option("theme.secondaryBackgroundColor", "#16213e")
+        st._config.set_option("theme.textColor", "#e2e2f0")
+    except Exception:
+        pass  # Internal API may not be available in all versions
 
 
 def _parse_ingredients(raw: str) -> list[str]:
@@ -438,6 +621,372 @@ def _parse_ingredients(raw: str) -> list[str]:
     ]
 
 
+def _ingredient_symbol(name: str) -> str:
+    """Return a visual symbol for ingredient type."""
+    lower = name.lower()
+    non_veg_tokens = [
+        "chicken", "mutton", "beef", "pork", "fish", "shrimp", "egg",
+        "salmon", "tuna", "anchovy", "lamb", "bacon", "ham", "turkey",
+    ]
+    if any(token in lower for token in non_veg_tokens):
+        return "🍖"
+    return _t("veg_symbol")
+
+
+def _is_vegetarian_recipe(recipe: GeneratedRecipe) -> bool:
+    """Check if a recipe appears vegetarian based on ingredient names."""
+    non_veg_tokens = {
+        "chicken", "mutton", "beef", "pork", "fish", "shrimp", "egg",
+        "salmon", "tuna", "anchovy", "lamb", "bacon", "ham", "turkey",
+    }
+    for ing in recipe.ingredients:
+        lower = ing.name.lower()
+        if any(token in lower for token in non_veg_tokens):
+            return False
+    return True
+
+
+def _render_account_panel() -> None:
+    """Render login/register controls in sidebar."""
+    with st.expander(_t("account_header"), expanded=False):
+        if st.session_state.get("user_id"):
+            st.success(f"Signed in as {st.session_state.get('user_name', '')}")
+            if st.button(_t("logout_btn"), key="logout_btn"):
+                st.session_state.user_id = None
+                st.session_state.user_name = ""
+                st.rerun()
+            return
+
+        tab_login, tab_register, tab_verify, tab_reset = st.tabs([
+            _t("login_tab"),
+            _t("register_tab"),
+            _t("verify_tab"),
+            _t("reset_tab"),
+        ])
+
+        with tab_login:
+            with st.form("login_form"):
+                identifier = st.text_input(_t("login_id_label"))
+                password = st.text_input(_t("password_label"), type="password")
+                submitted = st.form_submit_button(_t("login_btn"))
+                if submitted:
+                    user = authenticate_user(identifier, password)
+                    if not user:
+                        st.error(_t("auth_failed"))
+                    elif not int(user.get("email_verified", 0)):
+                        st.warning(_t("verify_required"))
+                    else:
+                        st.session_state.user_id = user["id"]
+                        st.session_state.user_name = user["username"]
+                        st.rerun()
+
+        with tab_register:
+            with st.form("register_form"):
+                reg_user = st.text_input(_t("register_user_label"))
+                reg_email = st.text_input(_t("register_email_label"))
+                reg_pass = st.text_input(_t("register_password_label"), type="password")
+                reg_confirm = st.text_input(_t("register_confirm_label"), type="password")
+                reg_submit = st.form_submit_button(_t("register_btn"))
+                if reg_submit:
+                    if reg_pass != reg_confirm:
+                        st.error(_t("password_mismatch"))
+                    elif not reg_user or not reg_email or not reg_pass:
+                        st.error("Please fill all registration fields.")
+                    else:
+                        ok, message, code = register_user(reg_user, reg_email, reg_pass)
+                        if ok:
+                            st.success(message)
+                            st.caption(_t("dev_code_note"))
+                            st.code(str(code), language="text")
+                        else:
+                            st.error(message)
+
+        with tab_verify:
+            with st.form("verify_form"):
+                verify_id = st.text_input(_t("login_id_label"))
+                verify_code = st.text_input(_t("verify_code_label"))
+                col_v1, col_v2 = st.columns(2)
+                verify_submit = col_v1.form_submit_button(_t("verify_btn"))
+                resend_submit = col_v2.form_submit_button(_t("resend_code_btn"))
+
+                if verify_submit:
+                    ok, message = verify_email(verify_id, verify_code)
+                    if ok:
+                        st.success(message)
+                    else:
+                        st.error(message)
+
+                if resend_submit:
+                    ok, message, code = request_email_verification(verify_id)
+                    if ok:
+                        st.success(message)
+                        st.caption(_t("dev_code_note"))
+                        st.code(str(code), language="text")
+                    else:
+                        st.error(message)
+
+        with tab_reset:
+            with st.form("reset_form"):
+                reset_id = st.text_input(_t("login_id_label"), key="reset_identifier")
+                reset_code = st.text_input(_t("reset_code_label"))
+                new_password = st.text_input(_t("new_password_label"), type="password")
+                col_r1, col_r2 = st.columns(2)
+                req_submit = col_r1.form_submit_button(_t("request_reset_btn"))
+                reset_submit = col_r2.form_submit_button(_t("reset_password_btn"))
+
+                if req_submit:
+                    ok, message, code = request_password_reset(reset_id)
+                    if ok:
+                        st.success(message)
+                        st.caption(_t("dev_code_note"))
+                        st.code(str(code), language="text")
+                    else:
+                        st.error(message)
+
+                if reset_submit:
+                    ok, message = reset_password(reset_id, reset_code, new_password)
+                    if ok:
+                        st.success(message)
+                    else:
+                        st.error(message)
+
+
+def _render_payload_card(item: dict, key_prefix: str) -> None:
+    """Render rich details for a favorite/recent item payload."""
+    payload = item.get("payload", {})
+    item_type = item.get("item_type", "")
+    symbol = "🍽️" if item_type == "recipe" else _t("beverage_symbol")
+    title = item.get("item_name", "Unnamed")
+
+    with st.expander(f"{symbol} {title} · {item_type.title()}"):
+        if item_type == "recipe":
+            ingredients = payload.get("ingredients", [])
+            steps = payload.get("step_by_step_instructions", [])
+            st.markdown(f"**Ingredients:** {len(ingredients)}")
+            for ing in ingredients[:12]:
+                st.markdown(f"- {_ingredient_symbol(ing.get('name', ''))} {ing.get('name', '')} ({ing.get('original_measure', '')})")
+            st.markdown("**Steps:**")
+            for idx, step in enumerate(steps[:8], 1):
+                st.markdown(f"{idx}. {step}")
+        else:
+            ingredients = payload.get("ingredients", [])
+            steps = payload.get("instructions", [])
+            st.markdown(f"**Type:** {payload.get('type', '')}")
+            st.markdown("**Ingredients:**")
+            for ing in ingredients[:10]:
+                st.markdown(f"- {_t('beverage_symbol')} {ing.get('name', '')} ({ing.get('original_measure', '')})")
+            st.markdown("**Instructions:**")
+            for idx, step in enumerate(steps[:8], 1):
+                st.markdown(f"{idx}. {step}")
+
+        if st.button("Save Again", key=f"{key_prefix}_{item['id']}"):
+            add_favorite(
+                st.session_state.user_id,
+                item_type,
+                title,
+                payload,
+            )
+            st.success(_t("saved_ok"))
+
+
+def _recommend_from_history(user_id: int) -> list[dict]:
+    """Generate lightweight personalized recommendations from favorites/recents."""
+    history = get_favorites(user_id) + get_recents(user_id, limit=25)
+    tokens: set[str] = set()
+    for item in history:
+        payload = item.get("payload", {})
+        for ing in payload.get("ingredients", []):
+            name = str(ing.get("name", "")).strip().lower()
+            if len(name) > 2:
+                tokens.add(name)
+
+    if not tokens:
+        return []
+
+    token_list = list(tokens)
+    recipes_df = load_all_recipes()
+    beverages_df = load_beverages()
+
+    candidates: list[dict] = []
+    for _, row in recipes_df.head(3000).iterrows():
+        raw_ing = str(row.get("ingredients", "")).lower()
+        score = sum(1 for t in token_list if t in raw_ing)
+        if score > 0:
+            candidates.append({
+                "item_type": "recipe",
+                "item_name": row.get("recipe_name", "Unknown"),
+                "score": score,
+            })
+
+    for _, row in beverages_df.head(3000).iterrows():
+        raw_ing = str(row.get("ingredients", "")).lower()
+        score = sum(1 for t in token_list if t in raw_ing)
+        if score > 0:
+            candidates.append({
+                "item_type": "beverage",
+                "item_name": row.get("beverage_name", "Unknown"),
+                "score": score,
+            })
+
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    seen: set[str] = set()
+    output: list[dict] = []
+    for item in candidates:
+        key = f"{item['item_type']}::{item['item_name']}"
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(item)
+        if len(output) >= 12:
+            break
+    return output
+
+
+def _render_dashboard() -> None:
+    """Render user dashboard with favorites, recents, and profile."""
+    user_id = st.session_state.get("user_id")
+    if not user_id:
+        return
+
+    user = get_user(user_id)
+    if not user:
+        return
+
+    st.divider()
+    st.markdown(f"## {_t('dashboard_header')}")
+    fav_tab, recent_tab, recommend_tab, profile_tab = st.tabs([
+        _t("fav_tab"),
+        _t("recent_tab"),
+        _t("recommend_tab"),
+        _t("profile_tab"),
+    ])
+
+    with fav_tab:
+        favorites = get_favorites(user_id)
+        if not favorites:
+            st.info(_t("no_favorites"))
+        for item in favorites:
+            _render_payload_card(item, "fav")
+
+    with recent_tab:
+        recents = get_recents(user_id, limit=20)
+        if not recents:
+            st.info(_t("no_recent"))
+        for item in recents:
+            _render_payload_card(item, "recent")
+
+    with recommend_tab:
+        recs = _recommend_from_history(user_id)
+        if not recs:
+            st.info(_t("no_recommend"))
+        for item in recs:
+            symbol = "🍽️" if item["item_type"] == "recipe" else _t("beverage_symbol")
+            st.markdown(f"{symbol} **{item['item_name']}** · match score `{item['score']}`")
+
+    with profile_tab:
+        with st.form("profile_form"):
+            display_name = st.text_input(
+                _t("display_name_label"),
+                value=user.get("display_name", ""),
+            )
+            bio = st.text_area(
+                _t("bio_label"),
+                value=user.get("bio", ""),
+                height=100,
+            )
+            if st.form_submit_button(_t("profile_save_btn")):
+                update_profile(user_id, display_name, bio)
+                st.success("Profile updated")
+
+
+def _parse_quantity_to_grams(raw_qty: str) -> float:
+    """Best-effort conversion from a quantity token to grams for offline mode."""
+    if not raw_qty:
+        return 100.0
+    match = re.search(r"\d+(?:\.\d+)?", raw_qty)
+    if not match:
+        return 100.0
+    return float(match.group())
+
+
+def _parse_ingredient_items(raw: str) -> list[IngredientItem]:
+    """Parse CSV ingredient blob like 'name:qty,name:qty' into IngredientItem list."""
+    items: list[IngredientItem] = []
+    if not raw:
+        return items
+
+    for part in raw.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        if ":" in token:
+            name, qty = token.split(":", 1)
+            qty = qty.strip()
+        else:
+            name, qty = token, "100g"
+        items.append(
+            IngredientItem(
+                name=name.strip(),
+                quantity_grams=_parse_quantity_to_grams(qty),
+                original_measure=qty,
+            )
+        )
+    return items
+
+
+def _build_offline_recipe(candidate: dict, constraints: UserConstraints) -> GeneratedRecipe:
+    """Construct a GeneratedRecipe from a retrieved CSV candidate."""
+    instructions = [s.strip() for s in str(candidate.get("instructions", "")).split("|") if s.strip()]
+    equipment = [e.strip() for e in str(candidate.get("equipment", "")).split(",") if e.strip()]
+
+    return GeneratedRecipe(
+        recipe_name=str(candidate.get("recipe_name", _t("offline_recipe_title"))),
+        cuisine_type=str(candidate.get("cuisine", constraints.cuisine_preference)),
+        estimated_time_minutes=int(float(candidate.get("total_time_min", constraints.time_constraints.max_total_minutes))),
+        equipment_used=equipment,
+        servings=constraints.servings,
+        ingredients=_parse_ingredient_items(str(candidate.get("ingredients", ""))),
+        step_by_step_instructions=instructions,
+        beverage_pairing=None,
+    )
+
+
+def _build_offline_beverage(candidate: dict) -> BeveragePairing:
+    """Construct a BeveragePairing from a retrieved beverage candidate."""
+    instructions = [s.strip() for s in str(candidate.get("instructions", "")).split("|") if s.strip()]
+    return BeveragePairing(
+        name=str(candidate.get("beverage_name", "Suggested Beverage")),
+        type=str(candidate.get("type", "Mocktail")),
+        ingredients=_parse_ingredient_items(str(candidate.get("ingredients", ""))),
+        instructions=instructions,
+    )
+
+
+def _render_beverage_pairing(bp: BeveragePairing) -> None:
+    """Render a beverage pairing or standalone beverage card."""
+    st.markdown(f"## {bp.name}")
+    st.caption(f"Type: **{bp.type}**")
+    st.divider()
+
+    st.markdown(f"### {_t('ingredients_header')}")
+    for ing in bp.ingredients:
+        cols = st.columns([3, 2, 2])
+        cols[0].markdown(f"{_t('beverage_symbol')} **{ing.name}**")
+        cols[1].markdown(f"`{ing.quantity_grams}g`")
+        cols[2].markdown(f"_{ing.original_measure}_")
+
+    st.divider()
+    st.markdown(f"### {_t('instructions_header')}")
+    for i, step in enumerate(bp.instructions, 1):
+        st.markdown(
+            f'<div style="display:flex;align-items:flex-start;margin-bottom:10px;">'
+            f'<span class="step-number">{i}</span>'
+            f'<span style="padding-top:4px">{step}</span>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Sidebar
 # ─────────────────────────────────────────────────────────────────────────────
@@ -447,12 +996,7 @@ def _render_sidebar() -> dict:
     Render the sidebar and return a dict of all user-selected constraint values.
     """
     with st.sidebar:
-        # ── Theme toggle ───────────────────────────────────────────────────
-        dark = st.toggle(_t("dark_mode"), value=st.session_state.dark_mode)
-        if dark != st.session_state.dark_mode:
-            st.session_state.dark_mode = dark
-            st.rerun()
-
+        _render_account_panel()
         st.divider()
 
         # ── Language selector ──────────────────────────────────────────────
@@ -478,6 +1022,13 @@ def _render_sidebar() -> dict:
             help=_t("api_key_help"),
         )
         st.session_state.api_key = api_key
+
+        offline_mode = st.toggle(
+            _t("offline_mode_label"),
+            value=st.session_state.offline_mode,
+            help=_t("offline_mode_help"),
+        )
+        st.session_state.offline_mode = offline_mode
 
         st.divider()
 
@@ -505,8 +1056,8 @@ def _render_sidebar() -> dict:
         # ── Meal category ──────────────────────────────────────────────────
         meal_cat = st.selectbox(
             _t("meal_label"),
-            options=sorted(VALID_MEAL_CATEGORIES),
-            index=sorted(VALID_MEAL_CATEGORIES).index("Dinner"),
+            options=FOOD_MEAL_CATEGORIES,
+            index=FOOD_MEAL_CATEGORIES.index("Dinner"),
         )
 
         # ── Time constraints ───────────────────────────────────────────────
@@ -534,6 +1085,13 @@ def _render_sidebar() -> dict:
             except Exception as exc:
                 st.caption(f"DB unavailable: {exc}")
 
+        with st.expander(_t("datasets_header"), expanded=False):
+            st.caption(_t("datasets_help"))
+            st.markdown("- Indian food ideas: https://www.kaggle.com/datasets/nehaprabhavalkar/indian-food-101")
+            st.markdown("- Global recipes: https://www.kaggle.com/datasets/shuyangli94/food-com-recipes-and-user-interactions")
+            st.markdown("- Beverage recipes: https://www.thecocktaildb.com/api.php")
+            st.markdown("- Nutrition data: https://fdc.nal.usda.gov/download-datasets.html")
+
     return {
         "skill": skill,
         "equipment": equipment,
@@ -544,6 +1102,7 @@ def _render_sidebar() -> dict:
         "servings": servings,
         "absurd": absurd,
         "api_key": api_key,
+        "offline_mode": offline_mode,
     }
 
 
@@ -564,6 +1123,10 @@ def _render_recipe_tab(recipe, lang: str) -> None:
     ])
     if display.equipment_used:
         badges += f'<span class="badge">{_t("equipment_badge").format(eq=", ".join(display.equipment_used))}</span>'
+    if _is_vegetarian_recipe(display):
+        badges += '<span class="badge">🥬 Vegetarian</span>'
+    else:
+        badges += '<span class="badge">🍖 Non-Veg</span>'
     st.markdown(badges, unsafe_allow_html=True)
     st.markdown("")
 
@@ -572,7 +1135,7 @@ def _render_recipe_tab(recipe, lang: str) -> None:
     for ing in display.ingredients:
         note = f" *({ing.preparation_note})*" if ing.preparation_note else ""
         cols = st.columns([3, 2, 2])
-        cols[0].markdown(f"**{ing.name}**{note}")
+        cols[0].markdown(f"{_ingredient_symbol(ing.name)} **{ing.name}**{note}")
         cols[1].markdown(f"`{ing.quantity_grams}g`")
         cols[2].markdown(f"_{ing.original_measure}_")
 
@@ -648,27 +1211,7 @@ def _render_beverage_tab(recipe) -> None:
         st.info("No beverage pairing was generated.")
         return
 
-    st.markdown(f"## {bp.name}")
-    st.caption(f"Type: **{bp.type}**")
-    st.divider()
-
-    st.markdown(f"### {_t('ingredients_header')}")
-    for ing in bp.ingredients:
-        cols = st.columns([3, 2, 2])
-        cols[0].markdown(f"**{ing.name}**")
-        cols[1].markdown(f"`{ing.quantity_grams}g`")
-        cols[2].markdown(f"_{ing.original_measure}_")
-
-    st.divider()
-    st.markdown(f"### {_t('instructions_header')}")
-    for i, step in enumerate(bp.instructions, 1):
-        st.markdown(
-            f'<div style="display:flex;align-items:flex-start;margin-bottom:10px;">'
-            f'<span class="step-number">{i}</span>'
-            f'<span style="padding-top:4px">{step}</span>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+    _render_beverage_pairing(bp)
 
 
 def _render_debug_tab(result) -> None:
@@ -703,6 +1246,39 @@ def _run_generation(ingredients: list[str], sidebar_vals: dict) -> None:
         servings=sidebar_vals["servings"],
     )
 
+    if sidebar_vals.get("offline_mode"):
+        candidates = retrieve_candidate_recipes(constraints)
+        if not candidates:
+            raise ValueError(_t("offline_no_candidates"))
+
+        recipe = _build_offline_recipe(candidates[0], constraints)
+        bev_candidates = retrieve_beverage_pairing(constraints)
+        if bev_candidates:
+            recipe.beverage_pairing = _build_offline_beverage(bev_candidates[0])
+
+        nutrition = calculate_recipe_nutrition(recipe)
+        st.session_state.last_result = GenerationResult(
+            recipe=recipe,
+            nutrition=nutrition,
+            translated_recipe=None,
+            candidates_used=candidates,
+            raw_llm_response="",
+            system_prompt="Offline mode: no LLM prompt used.",
+            user_prompt="Offline mode: dataset retrieval only.",
+        )
+        user_id = st.session_state.get("user_id")
+        if user_id:
+            add_recent(user_id, "recipe", recipe.recipe_name, recipe.model_dump())
+            if recipe.beverage_pairing:
+                add_recent(
+                    user_id,
+                    "beverage",
+                    recipe.beverage_pairing.name,
+                    recipe.beverage_pairing.model_dump(),
+                )
+        st.session_state.last_constraints = constraints
+        return
+
     engine = CulinaryEngine(api_key=sidebar_vals["api_key"])
 
     with st.spinner(_t("generating")):
@@ -710,6 +1286,52 @@ def _run_generation(ingredients: list[str], sidebar_vals: dict) -> None:
 
     st.session_state.last_result = result
     st.session_state.last_constraints = constraints
+    user_id = st.session_state.get("user_id")
+    if user_id:
+        add_recent(user_id, "recipe", result.recipe.recipe_name, result.recipe.model_dump())
+        if result.recipe.beverage_pairing:
+            add_recent(
+                user_id,
+                "beverage",
+                result.recipe.beverage_pairing.name,
+                result.recipe.beverage_pairing.model_dump(),
+            )
+
+
+def _run_beverage_generation(
+    ingredients: list[str],
+    beverage_type: str,
+    sidebar_vals: dict,
+) -> None:
+    """Generate a standalone beverage from manual user input."""
+    constraints = UserConstraints(
+        skill_level=sidebar_vals["skill"],
+        available_equipment=sidebar_vals["equipment"],
+        available_ingredients=ingredients,
+        cuisine_preference="Global",
+        time_constraints=TimeConstraints(
+            max_prep_minutes=sidebar_vals["max_prep"],
+            max_total_minutes=sidebar_vals["max_total"],
+        ),
+        meal_category=beverage_type,
+        absurd_combos=False,
+        target_language="en",
+        servings=sidebar_vals["servings"],
+    )
+
+    candidates = retrieve_candidate_recipes(constraints)
+    if not candidates:
+        raise ValueError(_t("no_beverage_match"))
+
+    st.session_state.last_beverage = _build_offline_beverage(candidates[0])
+    user_id = st.session_state.get("user_id")
+    if user_id:
+        add_recent(
+            user_id,
+            "beverage",
+            st.session_state.last_beverage.name,
+            st.session_state.last_beverage.model_dump(),
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -718,12 +1340,13 @@ def _run_generation(ingredients: list[str], sidebar_vals: dict) -> None:
 
 def main() -> None:
     st.set_page_config(
-        page_title="Flavor Fusion AI",
+        page_title="FUSION FLAVOUR",
         page_icon="🍽️",
         layout="wide",
         initial_sidebar_state="expanded",
     )
 
+    init_user_db()
     _init_session_state()
     _apply_theme()
 
@@ -765,13 +1388,67 @@ def main() -> None:
         ingredients = _parse_ingredients(pantry_raw)
         if not ingredients:
             st.warning(_t("no_ingredients"))
-        elif not sidebar_vals["api_key"]:
+        elif (not sidebar_vals["api_key"]) and (not sidebar_vals.get("offline_mode")):
             st.warning(_t("no_api_key"))
         else:
             try:
                 _run_generation(ingredients, sidebar_vals)
             except Exception as exc:
                 st.error(f"{_t('error_prefix')}: {exc}")
+
+    st.divider()
+
+    beverage_input_col, beverage_action_col = st.columns([3, 1], gap="large")
+
+    with beverage_input_col:
+        beverage_raw = st.text_area(
+            _t("beverage_input_label"),
+            value=st.session_state.beverage_text,
+            height=140,
+            placeholder=_t("beverage_input_placeholder"),
+            help=_t("beverage_input_help"),
+        )
+        st.session_state.beverage_text = beverage_raw
+
+    with beverage_action_col:
+        beverage_type = st.selectbox(
+            _t("beverage_type_label"),
+            options=BEVERAGE_CATEGORIES,
+            index=BEVERAGE_CATEGORIES.index("Mocktail"),
+        )
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+        beverage_clicked = st.button(
+            _t("generate_beverage_btn"),
+            use_container_width=True,
+        )
+
+    if beverage_clicked:
+        beverage_ingredients = _parse_ingredients(beverage_raw)
+        if not beverage_ingredients:
+            st.warning(_t("no_beverage_ingredients"))
+        else:
+            try:
+                _run_beverage_generation(
+                    beverage_ingredients,
+                    beverage_type,
+                    sidebar_vals,
+                )
+            except Exception as exc:
+                st.error(f"{_t('error_prefix')}: {exc}")
+
+    beverage_result = st.session_state.get("last_beverage")
+    if beverage_result is not None:
+        st.divider()
+        st.markdown(f"## {_t('beverage_result_header')}")
+        if st.session_state.get("user_id") and st.button(_t("save_beverage_btn"), key="save_standalone_beverage"):
+            add_favorite(
+                st.session_state.user_id,
+                "beverage",
+                beverage_result.name,
+                beverage_result.model_dump(),
+            )
+            st.success(_t("saved_ok"))
+        _render_beverage_pairing(beverage_result)
 
     # ── Results ──────────────────────────────────────────────────────────────
     result = st.session_state.get("last_result")
@@ -783,12 +1460,33 @@ def main() -> None:
 
         st.markdown(f"## {display_recipe.recipe_name}")
 
-        tab_recipe, tab_nutrition, tab_beverage, tab_debug = st.tabs([
+        tab_recipe, tab_nutrition, tab_beverage = st.tabs([
             _t("recipe_tab"),
             _t("nutrition_tab"),
             _t("beverage_tab"),
-            _t("debug_tab"),
         ])
+
+        if st.session_state.get("user_id") and st.button(_t("save_recipe_btn"), key="save_recipe"):
+            add_favorite(
+                st.session_state.user_id,
+                "recipe",
+                display_recipe.recipe_name,
+                display_recipe.model_dump(),
+            )
+            st.success(_t("saved_ok"))
+
+        if (
+            st.session_state.get("user_id")
+            and display_recipe.beverage_pairing
+            and st.button(_t("save_beverage_btn"), key="save_paired_beverage")
+        ):
+            add_favorite(
+                st.session_state.user_id,
+                "beverage",
+                display_recipe.beverage_pairing.name,
+                display_recipe.beverage_pairing.model_dump(),
+            )
+            st.success(_t("saved_ok"))
 
         with tab_recipe:
             _render_recipe_tab(display_recipe, st.session_state.language)
@@ -799,8 +1497,7 @@ def main() -> None:
         with tab_beverage:
             _render_beverage_tab(display_recipe)
 
-        with tab_debug:
-            _render_debug_tab(result)
+    _render_dashboard()
 
 
 if __name__ == "__main__":

@@ -17,7 +17,11 @@ from config import (
     BEVERAGES_CSV,
     GLOBAL_RECIPES_CSV,
     INDIAN_RECIPES_CSV,
+    INDIAN_REGIONAL_RECIPES_CSV,
     NUTRITION_DB_CSV,
+    OFFLINE_WORLD_BEVERAGES_CSV,
+    OFFLINE_WORLD_NUTRITION_CSV,
+    OFFLINE_WORLD_RECIPES_CSV,
 )
 from models import UserConstraints
 from retrieval import (
@@ -157,7 +161,11 @@ class RecipeDatabase:
         """Return the absolute paths of all dataset files."""
         return {
             "indian_recipes": str(INDIAN_RECIPES_CSV),
+            "indian_regional_recipes": str(INDIAN_REGIONAL_RECIPES_CSV),
             "global_recipes": str(GLOBAL_RECIPES_CSV),
+            "offline_world_recipes": str(OFFLINE_WORLD_RECIPES_CSV),
             "beverages": str(BEVERAGES_CSV),
+            "offline_world_beverages": str(OFFLINE_WORLD_BEVERAGES_CSV),
             "nutrition_database": str(NUTRITION_DB_CSV),
+            "offline_world_nutrition": str(OFFLINE_WORLD_NUTRITION_CSV),
         }

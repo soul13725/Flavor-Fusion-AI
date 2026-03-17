@@ -21,7 +21,11 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 from thefuzz import fuzz, process as fuzz_process
 
-from config import NUTRITION_DB_CSV, NUTRITION_FUZZ_THRESHOLD
+from config import (
+    NUTRITION_DB_CSV,
+    NUTRITION_FUZZ_THRESHOLD,
+    OFFLINE_WORLD_NUTRITION_CSV,
+)
 from models import (
     GeneratedRecipe,
     IngredientItem,
@@ -102,7 +106,15 @@ def _load_nutrition_db() -> pd.DataFrame:
     if _NUTRITION_DF is not None:
         return _NUTRITION_DF
     try:
-        df = pd.read_csv(NUTRITION_DB_CSV)
+        frames: List[pd.DataFrame] = []
+        for path in (NUTRITION_DB_CSV, OFFLINE_WORLD_NUTRITION_CSV):
+            try:
+                frames.append(pd.read_csv(path))
+            except FileNotFoundError:
+                logger.warning("Nutrition dataset not found: %s", path)
+        if not frames:
+            return pd.DataFrame()
+        df = pd.concat(frames, ignore_index=True)
         df["food_name_lower"] = df["food_name"].str.strip().str.lower()
         # Ensure numeric columns
         for col in (

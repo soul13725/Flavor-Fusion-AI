@@ -17,9 +17,13 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
 INDIAN_RECIPES_CSV   = DATA_DIR / "indian_recipes.csv"
+INDIAN_REGIONAL_RECIPES_CSV = DATA_DIR / "indian_regional_recipes.csv"
 GLOBAL_RECIPES_CSV   = DATA_DIR / "global_recipes.csv"
+OFFLINE_WORLD_RECIPES_CSV = DATA_DIR / "offline_world_recipes.csv"
 BEVERAGES_CSV        = DATA_DIR / "beverages.csv"
+OFFLINE_WORLD_BEVERAGES_CSV = DATA_DIR / "offline_world_beverages.csv"
 NUTRITION_DB_CSV     = DATA_DIR / "nutrition_database.csv"
+OFFLINE_WORLD_NUTRITION_CSV = DATA_DIR / "offline_world_nutrition.csv"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM Configuration
