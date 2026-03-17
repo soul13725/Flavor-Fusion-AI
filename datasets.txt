@@ -1,0 +1,46 @@
+1) RecipeNLG Dataset (2M+ recipes)
+
+A massive semi-structured recipe dataset with titles, ingredients, and instructions.
+
+➡️ Kaggle – RecipeNLG:
+https://www.kaggle.com/datasets/paultimothymooney/recipenlg
+
+(There’s also a variant at https://www.kaggle.com/datasets/saldenisov/recipenlg
+ which mirrors it with slightly different provisions.)
+
+You can also find a version indexed on Hugging Face:
+https://huggingface.co/datasets/mbien/recipe_nlg
+
+2) Food.com Recipes and Interactions Dataset
+
+Contains recipes from Food.com with user interaction info, ingredient lists, and descriptive text.
+
+➡️ Kaggle – Food.com Recipes and Interactions:
+https://www.kaggle.com/datasets/shuyangli94/food-com-recipes-and-user-interactions
+
+3) Epicurious Recipes (with Nutrition Info)
+
+About 20k recipes with nutrition breakdown (calories, protein, fat, etc.), categories, and ratings.
+
+➡️ Kaggle – Epicurious Recipes:
+https://www.kaggle.com/datasets/hugodarwood/epirecipes
+
+4) Indian Food Recipes Dataset
+
+A dataset focused on Indian cuisine with regional tags and ingredient lists — very useful for authentic Indian coverage.
+
+➡️ Kaggle – Indian Food and Its Recipes Dataset:
+https://www.kaggle.com/datasets/kishanpahadiya/indian-food-and-its-recipes-dataset-with-images
+
+5) Cocktail & Beverage Dataset (CocktailDB or Kaggle variant)
+
+A dataset of drinks, alcoholic and non-alcoholic, with ingredients and instructions — ideal for your beverage generator.
+
+➡️ TheCocktailDB (API/JSON, not Kaggle):
+https://www.thecocktaildb.com/
+ (free API accessible for download)
+
+Although there isn’t one canonical Kaggle dataset for cocktails with high popularity, you can search for things like:
+https://www.kaggle.com/search?q=cocktail+recipes&type=datasets
+
+(Also useful: Food Ingredients & Recipe dataset with images — smaller but handy.)
